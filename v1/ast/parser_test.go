@@ -2462,7 +2462,7 @@ func TestSomeDeclExpr(t *testing.T) {
 }
 
 func TestEvery(t *testing.T) {
-	opts := ParserOptions{unreleasedKeywords: true, FutureKeywords: []string{"every"}}
+	opts := ParserOptions{FutureKeywords: []string{"every"}}
 	assertParseOneExpr(t, "simple", "every x in xs { true }",
 		&Expr{
 			Terms: &Every{
@@ -8373,6 +8373,7 @@ func assertParseModule(t *testing.T, msg string, input string, correct *Module, 
 	if len(opts) == 1 {
 		opt = opts[0]
 	}
+
 	m, err := ParseModuleWithOpts("", input, opt)
 	if err != nil {
 		t.Errorf("Error on test \"%s\": parse error on %s: %s", msg, input, err)
@@ -8385,10 +8386,25 @@ func assertParseModule(t *testing.T, msg string, input string, correct *Module, 
 
 }
 
-func assertParseModuleError(t *testing.T, msg, input string) {
-	m, err := ParseModule("", input)
+func assertParseModuleError(t *testing.T, msg, input string, opts ...ParserOptions) {
+	t.Helper()
+	assertParseModuleErrorMessage(t, msg, input, "", opts...)
+}
+
+func assertParseModuleErrorMessage(t *testing.T, msg, input, expected string, opts ...ParserOptions) {
+	t.Helper()
+
+	opt := ParserOptions{}
+	if len(opts) == 1 {
+		opt = opts[0]
+	}
+
+	m, err := ParseModuleWithOpts("", input, opt)
 	if err == nil {
 		t.Errorf("Error on test \"%s\": expected parse error: %v (parsed)", msg, m)
+	}
+	if result := err.Error(); !strings.Contains(result, expected) {
+		t.Errorf("Error on test \"%s\": expected parse error to contain:\n\n%v\n\nbut got:\n\n%v", msg, expected, result)
 	}
 }
 
@@ -9440,5 +9456,45 @@ func TestNotImport(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestParseNotBody_InnerExprHasLocation regression test for: GH#8717
+func TestParseNotBody_InnerExprHasLocation(t *testing.T) {
+	module := `package test
+		import future.keywords.not
+		
+		p if {
+			not f(1)
+		}
+	`
+
+	mod, err := ParseModule("test.rego", module)
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+
+	outer := mod.Rules[0].Body[0]
+	if outer.Location == nil {
+		t.Fatalf("outer Expr has nil Location")
+	}
+
+	not := outer.Terms.(*Not)
+	if not.Location == nil {
+		t.Fatalf("Not.Location is nil")
+	}
+
+	inner := not.Body[0]
+	if inner.Location == nil {
+		t.Fatalf("inner Expr inside Not.Body has nil Location")
+	}
+	if inner.Location.Col != 4 {
+		t.Errorf("Expected column to be 4 but got: %v", inner.Location.Col)
+	}
+	if inner.Location.Row != 5 {
+		t.Errorf("Expected row to be 5 but got: %v", inner.Location.Row)
+	}
+	if inner.Location.File != "test.rego" {
+		t.Errorf("Expected file to be test.rego but got: %v", inner.Location.File)
 	}
 }
